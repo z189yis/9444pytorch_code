@@ -14,7 +14,6 @@ from collections import namedtuple
 from PIL import Image
 from rect_util import Rect
 import img_util as imgu
-import matplotlib.pyplot as plt
 
 def display_summary(train_data_reader, val_data_reader, test_data_reader):
     '''
@@ -29,18 +28,25 @@ def display_summary(train_data_reader, val_data_reader, test_data_reader):
                      train_data_reader.per_emotion_count[index], 
                      val_data_reader.per_emotion_count[index], 
                      test_data_reader.per_emotion_count[index]))
+    
+    print("{0}\t{1}\t{2}\t{3}".format("".ljust(10), "Train", "Val", "Test"))
+    for index in range(emotion_count):
+        print("{0}\t{1}\t{2}\t{3}".format(emotin_header[index].ljust(10), 
+                     train_data_reader.per_emotion_count[index], 
+                     val_data_reader.per_emotion_count[index], 
+                     test_data_reader.per_emotion_count[index]))
 
 class FERPlusParameters():
     '''
     FER+ reader parameters
     '''
-    def __init__(self, target_size, width, height, training_mode = "majority", determinisitc = False, shuffle = True):
-        self.target_size   = target_size
-        self.width         = width
-        self.height        = height
+    def __init__(self, num_emotions, image_height, image_width, training_mode = "majority", use_augmentation = False, shuffle = True):
+        self.target_size = num_emotions
+        self.width = image_width
+        self.height = image_height
         self.training_mode = training_mode
-        self.determinisitc = determinisitc
-        self.shuffle       = shuffle
+        self.determinisitc = not use_augmentation
+        self.shuffle = shuffle
                      
 class FERPlusReader(object):
     '''
@@ -161,6 +167,9 @@ class FERPlusReader(object):
                 for row in emotion_label: 
                     # load the image
                     image_path = os.path.join(folder_path, row[0])
+                    if not os.path.exists(image_path):
+                        continue
+                        
                     image_data = Image.open(image_path)
                     image_data.load()
 

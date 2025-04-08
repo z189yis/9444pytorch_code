@@ -31,27 +31,37 @@ class VGG13(nn.Module):
         
         # First block (64 filters)
         self.conv1_1 = nn.Conv2d(1, 64, kernel_size=3, padding=1)
+        self.bn1_1 = nn.BatchNorm2d(64)  # 添加BatchNorm
         self.conv1_2 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
+        self.bn1_2 = nn.BatchNorm2d(64)  # 添加BatchNorm
         self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
         self.drop1 = nn.Dropout2d(0.25)
         
         # Second block (128 filters)
         self.conv2_1 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.bn2_1 = nn.BatchNorm2d(128)  # 添加BatchNorm
         self.conv2_2 = nn.Conv2d(128, 128, kernel_size=3, padding=1)
+        self.bn2_2 = nn.BatchNorm2d(128)  # 添加BatchNorm
         self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
         self.drop2 = nn.Dropout2d(0.25)
         
         # Third block (256 filters)
         self.conv3_1 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
+        self.bn3_1 = nn.BatchNorm2d(256)  # 添加BatchNorm
         self.conv3_2 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
+        self.bn3_2 = nn.BatchNorm2d(256)  # 添加BatchNorm
         self.conv3_3 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
+        self.bn3_3 = nn.BatchNorm2d(256)  # 添加BatchNorm
         self.pool3 = nn.MaxPool2d(kernel_size=2, stride=2)
         self.drop3 = nn.Dropout2d(0.25)
         
         # Fourth block (256 filters)
         self.conv4_1 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
+        self.bn4_1 = nn.BatchNorm2d(256)  # 添加BatchNorm
         self.conv4_2 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
+        self.bn4_2 = nn.BatchNorm2d(256)  # 添加BatchNorm
         self.conv4_3 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
+        self.bn4_3 = nn.BatchNorm2d(256)  # 添加BatchNorm
         self.pool4 = nn.MaxPool2d(kernel_size=2, stride=2)
         self.drop4 = nn.Dropout2d(0.25)
         
@@ -69,35 +79,51 @@ class VGG13(nn.Module):
         self.fc7 = nn.Linear(1024, num_classes)
         
         # Model properties
-        self.learning_rate = 0.05
+        self.learning_rate = 0.01  # 降低学习率
         self.input_height = 64
         self.input_width = 64
         self.input_channels = 1
         
+        # 初始化权重 (模仿CNTK的glorot_uniform)
+        self._initialize_weights()
+        
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.zeros_(m.bias)
+        
     def forward(self, x):
         # Block 1
-        x = F.relu(self.conv1_1(x))
-        x = F.relu(self.conv1_2(x))
+        x = F.relu(self.bn1_1(self.conv1_1(x)))
+        x = F.relu(self.bn1_2(self.conv1_2(x)))
         x = self.pool1(x)
         x = self.drop1(x)
         
         # Block 2
-        x = F.relu(self.conv2_1(x))
-        x = F.relu(self.conv2_2(x))
+        x = F.relu(self.bn2_1(self.conv2_1(x)))
+        x = F.relu(self.bn2_2(self.conv2_2(x)))
         x = self.pool2(x)
         x = self.drop2(x)
         
         # Block 3
-        x = F.relu(self.conv3_1(x))
-        x = F.relu(self.conv3_2(x))
-        x = F.relu(self.conv3_3(x))
+        x = F.relu(self.bn3_1(self.conv3_1(x)))
+        x = F.relu(self.bn3_2(self.conv3_2(x)))
+        x = F.relu(self.bn3_3(self.conv3_3(x)))
         x = self.pool3(x)
         x = self.drop3(x)
         
         # Block 4
-        x = F.relu(self.conv4_1(x))
-        x = F.relu(self.conv4_2(x))
-        x = F.relu(self.conv4_3(x))
+        x = F.relu(self.bn4_1(self.conv4_1(x)))
+        x = F.relu(self.bn4_2(self.conv4_2(x)))
+        x = F.relu(self.bn4_3(self.conv4_3(x)))
         x = self.pool4(x)
         x = self.drop4(x)
         
