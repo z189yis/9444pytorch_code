@@ -52,9 +52,9 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
     # 确保使用GPU训练
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device.type == 'cuda':
-        logging.info(f"Using GPU: {torch.cuda.get_device_name(0)}")
+        print(f"Using GPU: {torch.cuda.get_device_name(0)}")
     else:
-        logging.info("GPU not available, using CPU instead.")
+        print("GPU not available, using CPU instead.")
     
     # 创建需要的文件夹
     output_model_path = os.path.join(base_folder, 'models')
@@ -75,7 +75,7 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
     model.to(device)
     
     # 读取FER+数据集
-    logging.info("Loading data...")
+    print("Loading data...")
     train_params = FERPlusParameters(num_classes, model.input_height, model.input_width, training_mode, False)
     test_and_val_params = FERPlusParameters(num_classes, model.input_height, model.input_width, "majority", True)
 
@@ -104,7 +104,7 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
     
     # 如果需要恢复训练且检查点存在
     if resume and os.path.exists(checkpoint_path):
-        logging.info(f"Resuming training from checkpoint: {checkpoint_path}")
+        print(f"Resuming training from checkpoint: {checkpoint_path}")
         checkpoint = torch.load(checkpoint_path)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -114,11 +114,11 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
         best_test_accuracy = checkpoint['best_test_accuracy']
         best_epoch = checkpoint['best_epoch']
         
-        logging.info(f"Resuming from epoch {start_epoch}, best validation accuracy: {max_val_accuracy*100:.2f}%")
+        print(f"Resuming from epoch {start_epoch}, best validation accuracy: {max_val_accuracy*100:.2f}%")
     else:
-        logging.info("Starting fresh training...")
+        print("Starting fresh training...")
 
-    logging.info("Start training...")
+    print("Start training...")
     
     # 创建混合精度训练的scaler (适用于支持混合精度的GPU)
     scaler = torch.cuda.amp.GradScaler() if device.type == 'cuda' else None
@@ -250,12 +250,12 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
                 if final_test_accuracy > best_test_accuracy: 
                     best_test_accuracy = final_test_accuracy
     
-            logging.info("Epoch {}: took {:.3f}s".format(epoch, time.time() - start_time))
-            logging.info("  training loss:\t{:e}".format(training_loss))
-            logging.info("  training accuracy:\t\t{:.2f} %".format(training_accuracy * 100))
-            logging.info("  validation accuracy:\t\t{:.2f} %".format(val_accuracy * 100))
+            print("Epoch {}: took {:.3f}s".format(epoch, time.time() - start_time))
+            print("  training loss:\t{:e}".format(training_loss))
+            print("  training accuracy:\t\t{:.2f} %".format(training_accuracy * 100))
+            print("  validation accuracy:\t\t{:.2f} %".format(val_accuracy * 100))
             if test_run:
-                logging.info("  test accuracy:\t\t{:.2f} %".format(test_accuracy * 100))
+                print("  test accuracy:\t\t{:.2f} %".format(test_accuracy * 100))
             
             # 每个epoch保存检查点以便恢复训练
             torch.save({
@@ -273,7 +273,7 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
                 torch.save(model.state_dict(), os.path.join(output_model_folder, f"model_epoch_{epoch}.pth"))
     
     except KeyboardInterrupt:
-        logging.info("Training interrupted by user. Saving checkpoint...")
+        print("Training interrupted by user. Saving checkpoint...")
         # 保存检查点以便恢复训练
         torch.save({
             'epoch': epoch,
@@ -284,16 +284,16 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
             'best_test_accuracy': best_test_accuracy,
             'best_epoch': best_epoch
         }, checkpoint_path)
-        logging.info(f"Checkpoint saved to {checkpoint_path}. Use --resume flag to continue training.")
+        print(f"Checkpoint saved to {checkpoint_path}. Use --resume flag to continue training.")
         return
     
     # 训练结束，保存最终模型
     torch.save(model.state_dict(), os.path.join(output_model_folder, "final_model.pth"))
     
-    logging.info("")
-    logging.info("Best validation accuracy:\t\t{:.2f} %, epoch {}".format(max_val_accuracy * 100, best_epoch))
-    logging.info("Test accuracy corresponding to best validation:\t\t{:.2f} %".format(final_test_accuracy * 100))
-    logging.info("Best test accuracy:\t\t{:.2f} %".format(best_test_accuracy * 100))
+    print("")
+    print("Best validation accuracy:\t\t{:.2f} %, epoch {}".format(max_val_accuracy * 100, best_epoch))
+    print("Test accuracy corresponding to best validation:\t\t{:.2f} %".format(final_test_accuracy * 100))
+    print("Best test accuracy:\t\t{:.2f} %".format(best_test_accuracy * 100))
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
