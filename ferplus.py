@@ -40,13 +40,13 @@ class FERPlusParameters():
     '''
     FER+ reader parameters
     '''
-    def __init__(self, num_emotions, image_height, image_width, training_mode = "majority", use_augmentation = False, shuffle = True):
-        self.target_size = num_emotions
-        self.width = image_width
-        self.height = image_height
+    def __init__(self, target_size, width, height, training_mode = "majority", determinisitc = False, shuffle = True):
+        self.target_size   = target_size
+        self.width         = width
+        self.height        = height
         self.training_mode = training_mode
-        self.determinisitc = not use_augmentation
-        self.shuffle = shuffle
+        self.determinisitc = determinisitc
+        self.shuffle       = shuffle
                      
 class FERPlusReader(object):
     '''
@@ -144,7 +144,8 @@ class FERPlusReader(object):
                                                self.do_flip)
             final_image = imgu.preproc_img(distorted_image, A=self.A, A_pinv=self.A_pinv)
 
-            inputs[idx-self.batch_start]    = final_image.reshape(1, self.width, self.height)
+            # 匹配CNTK的数据格式，不使用reshape而是直接赋值
+            inputs[idx-self.batch_start, 0, :, :] = final_image
             targets[idx-self.batch_start,:] = self._process_target(self.data[index][2])
 
         self.batch_start += current_batch_size

@@ -41,17 +41,30 @@ train_folders = ['FER2013Train']
 valid_folders = ['FER2013Valid'] 
 test_folders  = ['FER2013Test']
 
-def cost_func(training_mode, prediction, target):
+def cost_func(training_mode, logits, target):
     '''
-    We use cross entropy in most mode, except for the multi-label mode, which require treating
-    multiple labels exactly the same.
+    我们在大多数模式下使用交叉熵损失，除了multi-label模式
+    注意：这里的实现与CNTK相匹配，直接接受logits而不是概率分布
     '''
+    # 先计算softmax得到概率分布
+    prediction = F.softmax(logits, dim=1)
+    
     if training_mode == 'majority' or training_mode == 'probability' or training_mode == 'crossentropy': 
-        # Cross Entropy
+        # 交叉熵损失 - 与CNTK实现匹配
         return -torch.sum(target * torch.log(prediction + 1e-7), dim=1).mean()
     elif training_mode == 'multi_target':
-        # Multi-target custom loss
+        # Multi-target 自定义损失
         return -torch.log(torch.max(target * prediction, dim=1)[0] + 1e-7).mean()
+
+def classification_error(logits, target):
+    '''
+    计算分类错误率，模仿CNTK的classification_error函数
+    返回错误率，而不是准确率
+    '''
+    _, predicted = torch.max(logits.data, 1)
+    _, targets = torch.max(target.data, 1)
+    incorrect = (predicted != targets).float().mean()  # 错误率
+    return incorrect
 
 def plot_training_curves(train_losses, train_accs, val_accs, test_accs, output_folder):
     """绘制训练过程的曲线图"""
@@ -96,6 +109,7 @@ def plot_training_curves(train_losses, train_accs, val_accs, test_accs, output_f
     # 保存图表
     plt.savefig(os.path.join(output_folder, 'training_curves.png'))
     print(f"训练曲线图已保存至 {os.path.join(output_folder, 'training_curves.png')}")
+    plt.close()
 
 def plot_confusion_matrix(cm, class_names, output_path, title='混淆矩阵'):
     """
@@ -167,6 +181,8 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
                         filemode=log_mode, 
                         level=logging.INFO)
     logging.getLogger().addHandler(logging.StreamHandler())
+    
+    logging.info(f"Starting with training mode {training_mode} using {model_name} model and max epochs {max_epochs}.")
 
     # 创建模型
     num_classes = len(emotion_table)
@@ -186,14 +202,14 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
     display_summary(train_data_reader, val_data_reader, test_data_reader)
     
     minibatch_size = 32
+    epoch_size = train_data_reader.size()
     
-    # 模仿CNTK的动量时间常数
+    # 创建与CNTK一样的学习率和动量时间常数
+    lr_per_minibatch = [model.learning_rate]*20 + [model.learning_rate / 2.0]*20 + [model.learning_rate / 10.0]*60
     mm_time_constant = -minibatch_size/np.log(0.9)
-    current_momentum = np.exp(-minibatch_size/mm_time_constant)
     
-    # 训练配置
-    lr_schedule = [model.learning_rate] * 20 + [model.learning_rate / 2.0] * 20 + [model.learning_rate / 10.0]
-    optimizer = optim.SGD(model.parameters(), lr=model.learning_rate, momentum=current_momentum, weight_decay=0.0001)
+    # 创建优化器 - 但我们会在每个minibatch更新学习率和动量
+    optimizer = optim.SGD(model.parameters(), lr=model.learning_rate, momentum=0.9)
     
     # 初始化训练状态
     start_epoch = 0
@@ -204,6 +220,12 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
     
     # 检查点文件路径
     checkpoint_path = os.path.join(output_model_folder, "checkpoint.pth")
+    
+    # 用于记录训练过程的列表
+    train_losses = []
+    train_accs = []
+    val_accs = []
+    test_accs = []
     
     # 如果需要恢复训练且检查点存在
     if resume and os.path.exists(checkpoint_path):
@@ -217,28 +239,20 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
         best_test_accuracy = checkpoint['best_test_accuracy']
         best_epoch = checkpoint['best_epoch']
         
+        if 'train_losses' in checkpoint:
+            train_losses = checkpoint['train_losses']
+            train_accs = checkpoint['train_accs']
+            val_accs = checkpoint['val_accs']
+            test_accs = checkpoint['test_accs']
+        
         print(f"Resuming from epoch {start_epoch}, best validation accuracy: {max_val_accuracy*100:.2f}%")
     else:
         print("Starting fresh training...")
 
     print("Start training...")
     
-    # 创建混合精度训练的scaler (适用于支持混合精度的GPU)
-    scaler = torch.cuda.amp.GradScaler() if device.type == 'cuda' else None
-    
-    # 用于记录训练过程的列表
-    train_losses = []
-    train_accs = []
-    val_accs = []
-    test_accs = []
-    
     try:
         for epoch in range(start_epoch, max_epochs):
-            # 更新学习率
-            if epoch < len(lr_schedule):
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = lr_schedule[epoch]
-            
             train_data_reader.reset()
             val_data_reader.reset()
             test_data_reader.reset()
@@ -247,14 +261,28 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
             model.train()
             start_time = time.time()
             training_loss = 0
-            training_error = 0  # 使用错误率替代准确率，与CNTK一致
+            training_error = 0  # 使用错误率而不是准确率，与CNTK一致
             train_samples = 0
             
             # 创建进度条
             progress = tqdm(total=train_data_reader.size()//minibatch_size, 
                           desc=f"Epoch {epoch}/{max_epochs-1}")
             
+            batch_idx = 0
             while train_data_reader.has_more():
+                # 按照CNTK计算当前minibatch对应的学习率和动量
+                global_minibatch_idx = epoch * (epoch_size // minibatch_size) + batch_idx
+                
+                # 设置当前学习率
+                current_lr_idx = min(global_minibatch_idx, len(lr_per_minibatch)-1)
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = lr_per_minibatch[current_lr_idx]
+                
+                # 设置当前动量 - 使用时间常数计算
+                current_momentum = np.exp(-minibatch_size/mm_time_constant)
+                for param_group in optimizer.param_groups:
+                    param_group['momentum'] = current_momentum
+                
                 images, labels, current_batch_size = train_data_reader.next_minibatch(minibatch_size)
                 
                 # 转换为PyTorch张量
@@ -264,49 +292,42 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
                 # 梯度清零
                 optimizer.zero_grad()
                 
-                if device.type == 'cuda':
-                    # 使用混合精度训练
-                    with torch.cuda.amp.autocast():
-                        outputs = model(images)
-                        outputs_softmax = nn.functional.softmax(outputs, dim=1)
-                        loss = cost_func(training_mode, outputs_softmax, labels)
-                    
-                    # 使用scaler进行反向传播和优化
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    # CPU训练
-                    outputs = model(images)
-                    outputs_softmax = nn.functional.softmax(outputs, dim=1)
-                    loss = cost_func(training_mode, outputs_softmax, labels)
-                    loss.backward()
-                    optimizer.step()
+                # 前向传播
+                logits = model(images)
+                
+                # 计算损失
+                loss = cost_func(training_mode, logits, labels)
+                
+                # 计算错误率 - 与CNTK一致
+                error = classification_error(logits, labels)
+                
+                # 反向传播与优化
+                loss.backward()
+                optimizer.step()
                 
                 # 统计
                 training_loss += loss.item() * current_batch_size
-                
-                # 计算错误率 - 与CNTK一致
-                _, predicted = torch.max(outputs.data, 1)
-                _, targets = torch.max(labels.data, 1)
-                incorrect = (predicted != targets).sum().item()  # 错误数量
-                training_error += incorrect  # 累加错误数
+                training_error += error.item() * current_batch_size
                 train_samples += current_batch_size
                 
                 # 更新进度条
                 progress.update(1)
+                batch_idx += 1
             
             progress.close()
-            training_error /= train_samples  # 计算平均错误率
-            training_accuracy = 1.0 - training_error  # 转换为准确率（模仿CNTK）
+            
+            # 计算平均损失和准确率
+            training_loss /= train_samples
+            training_error /= train_samples  # 错误率
+            training_accuracy = 1.0 - training_error  # 转换为准确率（与CNTK一致）
             
             # 记录训练损失和准确率
-            train_losses.append(training_loss / train_samples)
+            train_losses.append(training_loss)
             train_accs.append(training_accuracy * 100)
             
             # 验证阶段
             model.eval()
-            val_error = 0  # 使用错误率替代准确率，与CNTK一致
+            val_error = 0
             val_samples = 0
             
             with torch.no_grad():
@@ -317,17 +338,16 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
                     images = torch.from_numpy(images).to(device)
                     labels = torch.from_numpy(labels).to(device)
                     
-                    outputs = model(images)
+                    # 前向传播
+                    logits = model(images)
                     
                     # 计算错误率
-                    _, predicted = torch.max(outputs.data, 1)
-                    _, targets = torch.max(labels.data, 1)
-                    incorrect = (predicted != targets).sum().item()  # 错误数量
-                    val_error += incorrect  # 累加错误数
+                    error = classification_error(logits, labels)
+                    val_error += error.item() * current_batch_size
                     val_samples += current_batch_size
                 
-            val_error /= val_samples  # 计算平均错误率
-            val_accuracy = 1.0 - val_error  # 转换为准确率（模仿CNTK）
+            val_error /= val_samples  # 错误率
+            val_accuracy = 1.0 - val_error  # 转换为准确率（与CNTK一致）
             
             # 记录验证准确率
             val_accs.append(val_accuracy * 100)
@@ -337,12 +357,12 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
             if val_accuracy > max_val_accuracy:
                 best_epoch = epoch
                 max_val_accuracy = val_accuracy
-
+                
                 # 保存最佳模型
                 torch.save(model.state_dict(), os.path.join(output_model_folder, f"best_model.pth"))
-
+                
                 test_run = True
-                test_error = 0  # 使用错误率替代准确率，与CNTK一致
+                test_error = 0
                 test_samples = 0
                 
                 with torch.no_grad():
@@ -353,30 +373,38 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
                         images = torch.from_numpy(images).to(device)
                         labels = torch.from_numpy(labels).to(device)
                         
-                        outputs = model(images)
+                        # 前向传播
+                        logits = model(images)
                         
                         # 计算错误率
-                        _, predicted = torch.max(outputs.data, 1)
-                        _, targets = torch.max(labels.data, 1)
-                        incorrect = (predicted != targets).sum().item()  # 错误数量
-                        test_error += incorrect  # 累加错误数
+                        error = classification_error(logits, labels)
+                        test_error += error.item() * current_batch_size
                         test_samples += current_batch_size
                 
-                test_error /= test_samples  # 计算平均错误率
-                test_accuracy = 1.0 - test_error  # 转换为准确率（模仿CNTK）
+                test_error /= test_samples  # 错误率
+                test_accuracy = 1.0 - test_error  # 转换为准确率（与CNTK一致）
+                
                 final_test_accuracy = test_accuracy
                 
-                if final_test_accuracy > best_test_accuracy: 
+                if final_test_accuracy > best_test_accuracy:
                     best_test_accuracy = final_test_accuracy
                 
                 # 记录测试准确率
-                test_accs.append(final_test_accuracy * 100)
+                test_accs.append(test_accuracy * 100)
             else:
                 # 如果没有进行测试，记录None
                 test_accs.append(None)
-    
+            
+            logging.info("Epoch {}: took {:.3f}s".format(epoch, time.time() - start_time))
+            logging.info("  training loss:\t{:e}".format(training_loss))
+            logging.info("  training accuracy:\t\t{:.2f} %".format(training_accuracy * 100))
+            logging.info("  validation accuracy:\t\t{:.2f} %".format(val_accuracy * 100))
+            if test_run:
+                logging.info("  test accuracy:\t\t{:.2f} %".format(test_accuracy * 100))
+            
+            # 输出到控制台
             print("Epoch {}: took {:.3f}s".format(epoch, time.time() - start_time))
-            print("  training loss:\t{:e}".format(training_loss / train_samples))
+            print("  training loss:\t{:e}".format(training_loss))
             print("  training accuracy:\t\t{:.2f} %".format(training_accuracy * 100))
             print("  validation accuracy:\t\t{:.2f} %".format(val_accuracy * 100))
             if test_run:
@@ -397,11 +425,9 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
                 'test_accs': test_accs
             }, checkpoint_path)
             
-            # 另外每10个epoch保存一个带编号的检查点
+            # 另外每10个epoch保存一个带编号的检查点并绘制图表
             if epoch % 10 == 0 and epoch > 0:
                 torch.save(model.state_dict(), os.path.join(output_model_folder, f"model_epoch_{epoch}.pth"))
-                
-                # 每10个epoch绘制一次训练曲线图
                 plot_training_curves(train_losses, train_accs, val_accs, test_accs, output_model_folder)
     
     except KeyboardInterrupt:
@@ -434,7 +460,7 @@ def main(base_folder, training_mode='majority', model_name='VGG13', max_epochs=1
     print("Test accuracy corresponding to best validation:\t\t{:.2f} %".format(final_test_accuracy * 100))
     print("Best test accuracy:\t\t{:.2f} %".format(best_test_accuracy * 100))
     
-    # 绘制训练曲线图
+    # 绘制最终训练曲线图
     plot_training_curves(train_losses, train_accs, val_accs, test_accs, output_model_folder)
     
     # 计算并绘制混淆矩阵
