@@ -14,7 +14,6 @@ from collections import namedtuple
 from PIL import Image
 from rect_util import Rect
 import img_util as imgu
-import matplotlib.pyplot as plt
 
 def display_summary(train_data_reader, val_data_reader, test_data_reader):
     '''
@@ -26,6 +25,13 @@ def display_summary(train_data_reader, val_data_reader, test_data_reader):
     logging.info("{0}\t{1}\t{2}\t{3}".format("".ljust(10), "Train", "Val", "Test"))
     for index in range(emotion_count):
         logging.info("{0}\t{1}\t{2}\t{3}".format(emotin_header[index].ljust(10), 
+                     train_data_reader.per_emotion_count[index], 
+                     val_data_reader.per_emotion_count[index], 
+                     test_data_reader.per_emotion_count[index]))
+    
+    print("{0}\t{1}\t{2}\t{3}".format("".ljust(10), "Train", "Val", "Test"))
+    for index in range(emotion_count):
+        print("{0}\t{1}\t{2}\t{3}".format(emotin_header[index].ljust(10), 
                      train_data_reader.per_emotion_count[index], 
                      val_data_reader.per_emotion_count[index], 
                      test_data_reader.per_emotion_count[index]))
@@ -138,7 +144,8 @@ class FERPlusReader(object):
                                                self.do_flip)
             final_image = imgu.preproc_img(distorted_image, A=self.A, A_pinv=self.A_pinv)
 
-            inputs[idx-self.batch_start]    = final_image.reshape(1, self.width, self.height)
+            # 匹配CNTK的数据格式，不使用reshape而是直接赋值
+            inputs[idx-self.batch_start, 0, :, :] = final_image
             targets[idx-self.batch_start,:] = self._process_target(self.data[index][2])
 
         self.batch_start += current_batch_size
@@ -161,6 +168,9 @@ class FERPlusReader(object):
                 for row in emotion_label: 
                     # load the image
                     image_path = os.path.join(folder_path, row[0])
+                    if not os.path.exists(image_path):
+                        continue
+                        
                     image_data = Image.open(image_path)
                     image_data.load()
 
